@@ -1,0 +1,24 @@
+# Python virtual environment
+# This is the most important rule!
+.venv/
+venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# VS Code editor settings
+.vscode/
+
+# Log files and local data outputs
+# We don't need to upload the raw data we downloaded or scraped.
+# The final app should ideally read from a clean, committed data source.
+/data/
+*.log
+pdf_output.txt
+scraped_data/
+
+# Dependency and installation folders
+/dist/
+/build/
+*.egg-info/
