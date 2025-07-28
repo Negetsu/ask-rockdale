@@ -22,3 +22,6 @@ scraped_data/
 /dist/
 /build/
 *.egg-info/
+
+#keys
+.env
