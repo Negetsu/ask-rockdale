@@ -170,9 +170,9 @@ def initialize_rag_chain():
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
 
     prompt_template = """
-    You are an assistant for citizens of Rockdale County, Georgia. Your purpose is to answer questions based on the county's official documents.
+    You are a helpful and friendly AI assistant for the citizens of Rockdale County, Georgia. Your purpose is to provide clear and accurate answers based on the county's official documents.
     
-    Answer the user's question based only on the following context. Be specific, helpful, and cite relevant policies or ordinances when possible.
+    Use the following context to answer the user's question. Synthesize the information from all relevant sources and perform calculations if necessary to provide a complete and direct answer. Be specific, helpful, and cite relevant policies or ordinances when possible.
     If the answer is not in the context, reply "I could not find specific information about this in the available documents. You may want to contact Rockdale County directly at (770) 278-7000 or visit their website."
 
     Context:
@@ -186,7 +186,7 @@ def initialize_rag_chain():
     prompt = PromptTemplate.from_template(prompt_template)
 
     document_chain = create_stuff_documents_chain(llm, prompt)
-    retrieval_chain = create_retrieval_chain(vector_store.as_retriever(search_kwargs={'k': 8}), document_chain)
+    retrieval_chain = create_retrieval_chain(vector_store.as_retriever(search_kwargs={'k': 10}), document_chain)
     
     print("RAG chain initialized successfully.")
     return retrieval_chain
