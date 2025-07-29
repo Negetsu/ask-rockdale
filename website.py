@@ -249,7 +249,7 @@ with st.sidebar:
         "What are the noise ordinance regulations?",
         "Can I keep chickens in a residential area?",
         "What are the business licensing requirements?",
-        "How do I appeal my property tax assessment?"
+        "What percent of Rockdale's population have a degree?"
     ]
     
     for i, question in enumerate(example_questions):
