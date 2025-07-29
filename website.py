@@ -9,7 +9,7 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains import create_retrieval_chain
 import time
 
-# --- PAGE CONFIGURATION ---
+# PAGE setup
 st.set_page_config(
     page_title="Ask Rockdale - AI Assistant",
     page_icon="🏛️",
@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS ---
+# CSS
 st.markdown("""
 <style>
 /* Import Google Fonts */
@@ -146,7 +146,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- SETUP AND INITIALIZATION ---
+#  SETUP and laod stuff
 dotenv.load_dotenv()
 
 @st.cache_resource
@@ -191,10 +191,10 @@ def initialize_rag_chain():
     print("RAG chain initialized successfully.")
     return retrieval_chain
 
-# Initialize the chain
+# Do rag
 rag_chain = initialize_rag_chain()
 
-# --- MAIN HEADER ---
+# MAIN HEADER 
 st.markdown("""
 <div class="main-header">
     <h1>🏛️ Ask Rockdale</h1>
@@ -202,7 +202,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# --- STATS SECTION ---
+# STATS SECTION 
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -237,15 +237,15 @@ with col4:
     </div>
     """, unsafe_allow_html=True)
 
-# --- SIDEBAR ---
+# SIDEBAR 
 with st.sidebar:
     st.markdown("### 🚀 Try These Questions")
     
     example_questions = [
         "What are the rules for dogs in public parks?",
-        "Can I have a fire pit in my backyard?",
+        "What is Rockdale County's goal for parks and trails?",
         "What permits do I need to start a food truck business?",
-        "How do I register to vote in Rockdale County?",
+        "What is the 2040 vision for Rockdale County",
         "What are the noise ordinance regulations?",
         "Can I keep chickens in a residential area?",
         "What are the business licensing requirements?",
@@ -279,14 +279,14 @@ with st.sidebar:
     - ✅ Official information only
     """)
 
-# --- MAIN CONTENT AREA ---
+#  Main stuff
 main_col1, main_col2 = st.columns([2, 1])
 
 with main_col1:
     # Initialize chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
-        # Add welcome message
+        #  welcome message
         st.session_state.messages.append({
             "role": "assistant", 
             "content": "👋 Hello! I'm your AI assistant for Rockdale County information. I can help you find answers about local policies, services, permits, and regulations. What would you like to know?"
@@ -296,13 +296,13 @@ with main_col1:
     if "example_question" in st.session_state:
         example_q = st.session_state.example_question
         
-        # Add user message
+        #  user message
         st.session_state.messages.append({
             "role": "user", 
             "content": example_q
         })
         
-        # Generate AI response immediately
+        #  AI response quick
         with st.spinner("🔍 Searching documents..."):
             start_time = time.time()
             response = rag_chain.invoke({"input": example_q})
@@ -319,7 +319,7 @@ with main_col1:
                 "content": full_response
             })
         
-        # Clean up and rerun to show the conversation
+        # Clean up and rerun 
         del st.session_state.example_question
         st.rerun()
 
@@ -382,7 +382,7 @@ with main_col2:
     - **Check sources**: All answers cite official documents
     """)
 
-# --- FOOTER ---
+#  FOOTER 
 st.markdown("---")
 st.markdown("""
 <div class="footer">
