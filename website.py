@@ -158,7 +158,8 @@ def initialize_rag_chain():
     supabase_key = os.getenv("SUPABASE_ANON_KEY")
     supabase_client = create_client(supabase_url, supabase_key)
 
-    embedding_model = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    # FIXED: Changed from "gemini-embedding-001" to "models/text-embedding-004"
+    embedding_model = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
 
     vector_store = SupabaseVectorStore(
         client=supabase_client,
@@ -167,7 +168,7 @@ def initialize_rag_chain():
         query_name="match_documents"
     )
 
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.3)
 
     prompt_template = """
     You are a helpful and friendly AI assistant for the citizens of Rockdale County, Georgia. Your purpose is to provide clear and accurate answers based on the county's official documents.
