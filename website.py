@@ -146,66 +146,117 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-#  SETUP and laod stuff
+# Load environment variables
 dotenv.load_dotenv()
+
+# Debug mode - set to False for production
+DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
+
+# Cache for query results to avoid repeated expensive searches
+if "query_cache" not in st.session_state:
+    st.session_state.query_cache = {}
+
+def get_cached_response(query):
+    """Get cached response if available."""
+    query_lower = query.lower().strip()
+    return st.session_state.query_cache.get(query_lower)
+
+def cache_response(query, response):
+    """Cache a response for future use."""
+    query_lower = query.lower().strip()
+    st.session_state.query_cache[query_lower] = response
+    # Limit cache size to 50 entries
+    if len(st.session_state.query_cache) > 50:
+        # Remove oldest entry
+        oldest_key = next(iter(st.session_state.query_cache))
+        del st.session_state.query_cache[oldest_key]
 
 @st.cache_resource
 def initialize_rag_chain():
     """Initialize and return the RAG retrieval chain."""
-    print("Initializing RAG chain...")
+    try:
+        if DEBUG_MODE:
+            print("Initializing RAG chain...")
+        
+        # Validate environment variables
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_ANON_KEY")
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+        
+        if not all([supabase_url, supabase_key, google_api_key]):
+            raise ValueError("Missing required environment variables. Please check your .env file.")
+        
+        supabase_client = create_client(supabase_url, supabase_key)
+
+        # Using Google embeddings with 768 dimensions (matches Supabase setup)
+        embedding_model = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+
+        vector_store = SupabaseVectorStore(
+            client=supabase_client,
+            embedding=embedding_model,
+            table_name="documents",
+            query_name="match_documents"
+        )
+
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash-exp", 
+            temperature=0.3,
+            max_output_tokens=512  # Limit response length for speed
+        )
+
+        prompt_template = """
+        You are a helpful and friendly AI assistant for the citizens of Rockdale County, Georgia. Your purpose is to provide clear and accurate answers based on the county's official documents.
+        
+        IMPORTANT: You have been provided with relevant context from official Rockdale County documents below. Use this information to answer the user's question. If the context contains relevant information, you MUST use it to provide a detailed answer.
+        
+        Context from official documents:
+        {context}
+
+        Question: {input}
+
+        Instructions:
+        1. Carefully read through ALL the context provided above
+        2. If ANY part of the context is relevant to the question, use it to provide a comprehensive answer
+        3. Synthesize information from multiple sources if needed
+        4. Cite specific policies, ordinances, or document sections when possible
+        5. Only say you cannot find information if the context truly contains nothing relevant
+        6. Be conversational and helpful in your tone
+        7. If you're unsure, acknowledge it and suggest contacting the county directly
+        
+        Answer:
+        """
+        prompt = PromptTemplate.from_template(prompt_template)
+
+        document_chain = create_stuff_documents_chain(llm, prompt)
+        
+        # Configure retriever based on user preference
+        response_mode = getattr(st.session_state, 'response_mode', 'quick')
+        k_value = 5 if response_mode == 'quick' else 10
+        
+        retrieval_chain = create_retrieval_chain(
+            vector_store.as_retriever(
+                search_type="similarity",
+                search_kwargs={'k': k_value}
+            ), 
+            document_chain
+        )
+        
+        if DEBUG_MODE:
+            print("RAG chain initialized successfully.")
+        
+        return retrieval_chain
     
-    supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_ANON_KEY")
-    supabase_client = create_client(supabase_url, supabase_key)
+    except Exception as e:
+        st.error(f"❌ Failed to initialize the AI system: {str(e)}")
+        st.info("Please ensure your environment variables are correctly configured.")
+        return None
 
-    # Using Google embeddings with 768 dimensions (matches Supabase setup)
-    embedding_model = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
-
-    vector_store = SupabaseVectorStore(
-        client=supabase_client,
-        embedding=embedding_model,
-        table_name="documents",
-        query_name="match_documents"
-    )
-
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.3)
-
-    prompt_template = """
-    You are a helpful and friendly AI assistant for the citizens of Rockdale County, Georgia. Your purpose is to provide clear and accurate answers based on the county's official documents.
-    
-    IMPORTANT: You have been provided with relevant context from official Rockdale County documents below. Use this information to answer the user's question. If the context contains relevant information, you MUST use it to provide a detailed answer.
-    
-    Context from official documents:
-    {context}
-
-    Question: {input}
-
-    Instructions:
-    1. Carefully read through ALL the context provided above
-    2. If ANY part of the context is relevant to the question, use it to provide a comprehensive answer
-    3. Synthesize information from multiple sources if needed
-    4. Cite specific policies, ordinances, or document sections when possible
-    5. Only say you cannot find information if the context truly contains nothing relevant
-    
-    Answer:
-    """
-    prompt = PromptTemplate.from_template(prompt_template)
-
-    document_chain = create_stuff_documents_chain(llm, prompt)
-    # Increase search results and add score threshold for better relevance
-    retrieval_chain = create_retrieval_chain(
-        vector_store.as_retriever(
-            search_type="similarity",
-            search_kwargs={'k': 30}  # Increased from 10 to 20 for better coverage
-        ), 
-        document_chain
-    )
-    
-    print("RAG chain initialized successfully.")
-    return retrieval_chain
-
-# Do rag
+# Initialize RAG chain
 rag_chain = initialize_rag_chain()
+
+# If initialization failed, show error and stop
+if rag_chain is None:
+    st.stop()
 
 # MAIN HEADER 
 st.markdown("""
@@ -237,8 +288,8 @@ with col2:
 with col3:
     st.markdown("""
     <div class="stat-card">
-        <p class="stat-number">1000+</p>
-        <p class="stat-label">Documents</p>
+        <p class="stat-number">14K+</p>
+        <p class="stat-label">Document Chunks</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -252,13 +303,28 @@ with col4:
 
 # SIDEBAR 
 with st.sidebar:
+    st.markdown("### ⚙️ Settings")
+    
+    # Add response mode toggle
+    response_mode = st.radio(
+        "Response Detail:",
+        ["⚡ Quick (2-3s)", "📚 Detailed (4-6s)"],
+        index=0,
+        help="Choose between faster responses or more comprehensive answers"
+    )
+    
+    # Store in session state
+    st.session_state.response_mode = "quick" if "Quick" in response_mode else "detailed"
+    
+    st.markdown("---")
+    
     st.markdown("### 🚀 Try These Questions")
     
     example_questions = [
         "What are the rules for dogs in public parks?",
         "What is Rockdale County's goal for parks and trails?",
         "What permits do I need to start a food truck business?",
-        "What is the 2040 vision for Rockdale County",
+        "What is the 2040 vision for Rockdale County?",
         "What are the noise ordinance regulations?",
         "Can I keep chickens in a residential area?",
         "What are the business licensing requirements?",
@@ -292,14 +358,14 @@ with st.sidebar:
     - ✅ Official information only
     """)
 
-#  Main stuff
+# Main content area
 main_col1, main_col2 = st.columns([2, 1])
 
 with main_col1:
     # Initialize chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
-        #  welcome message
+        # Add welcome message
         st.session_state.messages.append({
             "role": "assistant", 
             "content": "👋 Hello! I'm your AI assistant for Rockdale County information. I can help you find answers about local policies, services, permits, and regulations. What would you like to know?"
@@ -309,36 +375,60 @@ with main_col1:
     if "example_question" in st.session_state:
         example_q = st.session_state.example_question
         
-        #  user message
+        # Add user message
         st.session_state.messages.append({
             "role": "user", 
             "content": example_q
         })
         
-        #  AI response quick
-        with st.spinner("🔍 Searching documents..."):
-            start_time = time.time()
-            response = rag_chain.invoke({"input": example_q})
-            end_time = time.time()
-            
-            answer = response["answer"]
-            response_time = round(end_time - start_time, 2)
-            
-            # DEBUG: Show what documents were retrieved
-            context_docs = response.get('context', [])
-            if context_docs:
-                st.sidebar.markdown("### 🔍 Debug: Retrieved Documents")
-                for i, doc in enumerate(context_docs[:3]):  # Show first 3
-                    with st.sidebar.expander(f"Doc {i+1}"):
-                        st.write(doc.page_content[:300] + "...")
-            
-            # Add assistant response with metadata
-            full_response = f"{answer}\n\n*⏱️ Response time: {response_time}s | 📄 Sources checked: {len(response.get('context', []))}"
-            
+        # Check cache first
+        cached = get_cached_response(example_q)
+        if cached:
             st.session_state.messages.append({
-                "role": "assistant", 
-                "content": full_response
+                "role": "assistant",
+                "content": cached + "\n\n*⚡ Retrieved from cache*"
             })
+            del st.session_state.example_question
+            st.rerun()
+        
+        # Generate AI response
+        with st.spinner("🔍 Searching documents..."):
+            try:
+                start_time = time.time()
+                response = rag_chain.invoke({"input": example_q})
+                end_time = time.time()
+                
+                answer = response["answer"]
+                response_time = round(end_time - start_time, 2)
+                
+                # Debug mode: Show retrieved documents
+                if DEBUG_MODE:
+                    context_docs = response.get('context', [])
+                    if context_docs:
+                        st.sidebar.markdown("### 🔍 Debug: Retrieved Documents")
+                        for i, doc in enumerate(context_docs[:3]):
+                            with st.sidebar.expander(f"Doc {i+1}"):
+                                st.write(doc.page_content[:300] + "...")
+                
+                # Add assistant response with metadata
+                full_response = f"{answer}\n\n*⏱️ Response time: {response_time}s | 📄 Sources checked: {len(response.get('context', []))}"
+                
+                # Cache the response
+                cache_response(example_q, full_response)
+                
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": full_response
+                })
+            
+            except Exception as e:
+                error_msg = "I apologize, but I encountered an error processing your question. Please try again or contact Rockdale County directly."
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
+                if DEBUG_MODE:
+                    st.error(f"Error: {str(e)}")
         
         # Clean up and rerun 
         del st.session_state.example_question
@@ -357,29 +447,49 @@ with main_col1:
         with st.chat_message("user"):
             st.markdown(prompt)
 
+        # Check cache first
+        cached = get_cached_response(prompt)
+        
         # Generate response
         with st.chat_message("assistant"):
-            with st.spinner("🔍 Searching documents..."):
-                start_time = time.time()
-                response = rag_chain.invoke({"input": prompt})
-                end_time = time.time()
-                
-                answer = response["answer"]
-                response_time = round(end_time - start_time, 2)
-                
-                # DEBUG: Show what documents were retrieved
-                context_docs = response.get('context', [])
-                if context_docs:
-                    st.sidebar.markdown("### 🔍 Debug: Retrieved Documents")
-                    for i, doc in enumerate(context_docs[:3]):  # Show first 3
-                        with st.sidebar.expander(f"Doc {i+1}"):
-                            st.write(doc.page_content[:300] + "...")
-                
-                st.markdown(answer)
-                
-                # Show response time and source count
-                sources = response.get("context", [])
-                st.caption(f"⏱️ Response time: {response_time}s | 📄 Sources checked: {len(sources)}")
+            if cached:
+                st.markdown(cached)
+                st.caption("⚡ Retrieved from cache")
+                answer = cached
+            else:
+                with st.spinner("🔍 Searching documents..."):
+                    try:
+                        start_time = time.time()
+                        response = rag_chain.invoke({"input": prompt})
+                        end_time = time.time()
+                        
+                        answer = response["answer"]
+                        response_time = round(end_time - start_time, 2)
+                        
+                        # Debug mode: Show retrieved documents
+                        if DEBUG_MODE:
+                            context_docs = response.get('context', [])
+                            if context_docs:
+                                st.sidebar.markdown("### 🔍 Debug: Retrieved Documents")
+                                for i, doc in enumerate(context_docs[:3]):
+                                    with st.sidebar.expander(f"Doc {i+1}"):
+                                        st.write(doc.page_content[:300] + "...")
+                        
+                        st.markdown(answer)
+                        
+                        # Show response time and source count
+                        sources = response.get("context", [])
+                        st.caption(f"⏱️ Response time: {response_time}s | 📄 Sources checked: {len(sources)}")
+                        
+                        # Cache the response
+                        cache_response(prompt, answer)
+                        
+                    except Exception as e:
+                        error_msg = "I apologize, but I encountered an error processing your question. Please try again or contact Rockdale County directly."
+                        st.error(error_msg)
+                        if DEBUG_MODE:
+                            st.error(f"Debug Error: {str(e)}")
+                        answer = error_msg
         
         # Add assistant response
         st.session_state.messages.append({"role": "assistant", "content": answer})
@@ -411,7 +521,7 @@ with main_col2:
     - **Check sources**: All answers cite official documents
     """)
 
-#  FOOTER 
+# FOOTER 
 st.markdown("---")
 st.markdown("""
 <div class="footer">
