@@ -21,7 +21,11 @@ class AdvancedDocumentProcessor:
     to improve RAG performance on both broad and specific queries.
     """
     def __init__(self):
-        self.embedding_model = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        # Using text-embedding-004 which outputs 768 dimensions to match Supabase setup
+        # Alternative: models/text-embedding-004 also works
+        self.embedding_model = GoogleGenerativeAIEmbeddings(
+            model="models/text-embedding-004"
+        )
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=800,
             chunk_overlap=150,
@@ -48,8 +52,17 @@ class AdvancedDocumentProcessor:
         """Loads all .docx and .pdf files from a specified folder."""
         print(f"\n📄 Loading documents from '{data_folder}' folder...")
         all_documents = []
+        
+        if not os.path.exists(data_folder):
+            print(f"❌ Error: '{data_folder}' folder not found!")
+            return []
+            
         file_paths = [os.path.join(data_folder, f) for f in os.listdir(data_folder) 
                       if f.endswith(('.docx', '.pdf'))]
+
+        if not file_paths:
+            print(f"⚠️ No .docx or .pdf files found in '{data_folder}'")
+            return []
 
         for file_path in file_paths:
             print(f"  - Loading {os.path.basename(file_path)}...")
@@ -148,14 +161,21 @@ class AdvancedDocumentProcessor:
         for pattern in rule_patterns:
             matches = re.finditer(pattern, content, re.IGNORECASE)
             for match in matches:
-                # Get the sentence and a bit of context around it
+                # Get expanded context around the match
                 start = max(0, match.start() - 150)
                 end = min(len(content), match.end() + 150)
                 context = content[start:end].strip()
                 
-                # Clean up context to start and end at sentence boundaries
-                context = re.sub(r'^[a-z].*?\s', '', context) 
-                context = re.sub(r'\s.*?([.!?]).*$', r'\1', context)
+                # FIXED: Improved sentence boundary cleanup
+                # Find first sentence start
+                first_sentence = re.search(r'^.*?[.!?]\s+', context)
+                if first_sentence and first_sentence.start() > 0:
+                    context = context[first_sentence.end():]
+                
+                # Find last sentence end
+                last_sentence = re.search(r'[.!?](?=\s|$)', context)
+                if last_sentence:
+                    context = context[:last_sentence.end()]
 
                 if len(context) > 100:
                     qa_chunk = Document(
@@ -164,7 +184,7 @@ class AdvancedDocumentProcessor:
                             **doc.metadata,
                             'chunk_type': 'qa_style',
                             'strategy': 'rule_based',
-                            'rule_pattern': pattern
+                            'rule_pattern': pattern[:50]  # Truncate pattern for metadata
                         }
                     )
                     qa_chunks.append(qa_chunk)
@@ -194,8 +214,10 @@ def upload_with_progress(chunks, embedding_model, supabase_client: Client, batch
     # Optional: Clear existing data from the table
     try:
         print("  - 🗑️ Clearing existing documents in Supabase table...")
-        # A safe way to delete all rows. Replace 'id' with your primary key if different.
-        supabase_client.table("documents").delete().gt('id', 0).execute()
+        # Delete all rows - works with any primary key type
+        result = supabase_client.table("documents").select("id").execute()
+        if result.data:
+            supabase_client.table("documents").delete().neq('id', -1).execute()
         print("    ✅ Cleared successfully.")
     except Exception as e:
         print(f"    ⚠️ Could not clear table (it might be empty): {e}")
@@ -220,15 +242,27 @@ def upload_with_progress(chunks, embedding_model, supabase_client: Client, batch
         successful_uploads += len(chunks[:batch_size])
         print(f"    ✅ Success! ({successful_uploads}/{len(chunks)} total)")
         
-        # Upload remaining batches
+        # Upload remaining batches with retry logic
         for i in range(batch_size, len(chunks), batch_size):
             batch_num = (i // batch_size) + 1
             batch = chunks[i:i + batch_size]
             print(f"  - 📦 Uploading Batch {batch_num}/{total_batches}...")
-            vector_store.add_documents(batch)
-            successful_uploads += len(batch)
-            print(f"    ✅ Success! ({successful_uploads}/{len(chunks)} total)")
-            time.sleep(0.5) # Avoid rate limiting
+            
+            # FIXED: Added retry logic
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    vector_store.add_documents(batch)
+                    successful_uploads += len(batch)
+                    print(f"    ✅ Success! ({successful_uploads}/{len(chunks)} total)")
+                    time.sleep(0.5)  # Avoid rate limiting
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        print(f"    ⚠️ Attempt {attempt + 1} failed, retrying... ({e})")
+                        time.sleep(2)
+                    else:
+                        print(f"    ❌ Failed after {max_retries} attempts: {e}")
 
     except Exception as e:
         print(f"    ❌ An error occurred during upload: {e}")
@@ -267,7 +301,8 @@ def main():
     
     # Ensure Supabase environment variables are set
     supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_SERVICE_KEY") # Use service key for admin actions like delete
+    supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+    
     if not supabase_url or not supabase_key:
         print("❌ Error: SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env file.")
         return
@@ -282,6 +317,9 @@ def main():
     
     # 1. Load documents
     raw_docs = processor.load_documents()
+    if not raw_docs:
+        print("❌ No documents loaded. Exiting.")
+        return
     
     # 2. Create chunks using the hybrid strategy
     enhanced_chunks = processor.create_enhanced_chunks(raw_docs)
@@ -294,7 +332,7 @@ def main():
         unique_chunks, 
         processor.embedding_model, 
         supabase_client,
-        batch_size=50 # Adjust batch size as needed
+        batch_size=25  # FIXED: Reduced from 50 to avoid rate limits
     )
     
     end_time = time.time()

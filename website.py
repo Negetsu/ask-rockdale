@@ -158,7 +158,7 @@ def initialize_rag_chain():
     supabase_key = os.getenv("SUPABASE_ANON_KEY")
     supabase_client = create_client(supabase_url, supabase_key)
 
-    # FIXED: Changed from "gemini-embedding-001" to "models/text-embedding-004"
+    # Using Google embeddings with 768 dimensions (matches Supabase setup)
     embedding_model = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
 
     vector_store = SupabaseVectorStore(
@@ -173,21 +173,33 @@ def initialize_rag_chain():
     prompt_template = """
     You are a helpful and friendly AI assistant for the citizens of Rockdale County, Georgia. Your purpose is to provide clear and accurate answers based on the county's official documents.
     
-    Use the following context to answer the user's question. Synthesize the information from all relevant sources and perform calculations if necessary to provide a complete and direct answer. Be specific, helpful, and cite relevant policies or ordinances when possible.
-    If the answer is not in the context, reply "I could not find specific information about this in the available documents. You may want to contact Rockdale County directly at (770) 278-7000 or visit their website."
-
-    Context:
+    IMPORTANT: You have been provided with relevant context from official Rockdale County documents below. Use this information to answer the user's question. If the context contains relevant information, you MUST use it to provide a detailed answer.
+    
+    Context from official documents:
     {context}
 
-    Question:
-    {input}
+    Question: {input}
 
+    Instructions:
+    1. Carefully read through ALL the context provided above
+    2. If ANY part of the context is relevant to the question, use it to provide a comprehensive answer
+    3. Synthesize information from multiple sources if needed
+    4. Cite specific policies, ordinances, or document sections when possible
+    5. Only say you cannot find information if the context truly contains nothing relevant
+    
     Answer:
     """
     prompt = PromptTemplate.from_template(prompt_template)
 
     document_chain = create_stuff_documents_chain(llm, prompt)
-    retrieval_chain = create_retrieval_chain(vector_store.as_retriever(search_kwargs={'k': 10}), document_chain)
+    # Increase search results and add score threshold for better relevance
+    retrieval_chain = create_retrieval_chain(
+        vector_store.as_retriever(
+            search_type="similarity",
+            search_kwargs={'k': 30}  # Increased from 10 to 20 for better coverage
+        ), 
+        document_chain
+    )
     
     print("RAG chain initialized successfully.")
     return retrieval_chain
@@ -312,6 +324,14 @@ with main_col1:
             answer = response["answer"]
             response_time = round(end_time - start_time, 2)
             
+            # DEBUG: Show what documents were retrieved
+            context_docs = response.get('context', [])
+            if context_docs:
+                st.sidebar.markdown("### 🔍 Debug: Retrieved Documents")
+                for i, doc in enumerate(context_docs[:3]):  # Show first 3
+                    with st.sidebar.expander(f"Doc {i+1}"):
+                        st.write(doc.page_content[:300] + "...")
+            
             # Add assistant response with metadata
             full_response = f"{answer}\n\n*⏱️ Response time: {response_time}s | 📄 Sources checked: {len(response.get('context', []))}"
             
@@ -346,6 +366,14 @@ with main_col1:
                 
                 answer = response["answer"]
                 response_time = round(end_time - start_time, 2)
+                
+                # DEBUG: Show what documents were retrieved
+                context_docs = response.get('context', [])
+                if context_docs:
+                    st.sidebar.markdown("### 🔍 Debug: Retrieved Documents")
+                    for i, doc in enumerate(context_docs[:3]):  # Show first 3
+                        with st.sidebar.expander(f"Doc {i+1}"):
+                            st.write(doc.page_content[:300] + "...")
                 
                 st.markdown(answer)
                 
